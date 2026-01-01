@@ -208,7 +208,8 @@ dog
 
 - 补丁代码: [port-traffic-dog-edit-remark-patch.sh](port-traffic-dog-edit-remark-patch.sh)
 - 集成文档: [port-traffic-dog-edit-remark-README.md](port-traffic-dog-edit-remark-README.md)
-- 项目主页: https://github.com/zywe03/realm-xwPF
+- 上游项目: <https://github.com/zywe03/realm-xwPF>
+- 本仓库: <https://github.com/MavisTok/realm-xwPF-ZDY>
 
 ---
 

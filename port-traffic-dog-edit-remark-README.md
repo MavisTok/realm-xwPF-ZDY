@@ -63,7 +63,7 @@
 
 ```bash
 # 下载补丁文件
-curl -sL "https://raw.githubusercontent.com/zywe03/realm-xwPF/main/port-traffic-dog-edit-remark-patch.sh" -o /tmp/patch.sh
+curl -sL "https://raw.githubusercontent.com/MavisTok/realm-xwPF-ZDY/main/port-traffic-dog-edit-remark-patch.sh" -o /tmp/patch.sh
 
 # 备份原始文件
 cp /usr/local/bin/port-traffic-dog.sh /usr/local/bin/port-traffic-dog.sh.backup
@@ -141,5 +141,6 @@ vim /usr/local/bin/port-traffic-dog.sh
 ## 📞 技术支持
 
 如有问题,请查看:
-- 项目主页: https://zywe.de
-- GitHub: https://github.com/zywe03/realm-xwPF
+
+- 上游项目: <https://github.com/zywe03/realm-xwPF>
+- 本仓库: <https://github.com/MavisTok/realm-xwPF-ZDY>
