@@ -12,6 +12,8 @@ create_nat_rules_for_ports() {
 
     local listen_count=${#LISTEN_PORT_ARRAY[@]}
     local remote_count=${#REMOTE_PORT_ARRAY[@]}
+    local is_batch=false
+    [ "$listen_count" -gt 1 ] && is_batch=true
 
     for i in "${!LISTEN_PORT_ARRAY[@]}"; do
         local listen_port="${LISTEN_PORT_ARRAY[$i]}"
@@ -27,11 +29,21 @@ create_nat_rules_for_ports() {
             fi
         fi
 
-        create_single_nat_rule "$listen_port" "$remote_port"
+        create_single_nat_rule "$listen_port" "$remote_port" "$is_batch"
     done
 
-    if [ ${#LISTEN_PORT_ARRAY[@]} -gt 1 ]; then
-        echo -e "${BLUE}多端口配置完成，共创建 ${#LISTEN_PORT_ARRAY[@]} 个中转规则${NC}"
+    if [ "$is_batch" = true ]; then
+        local first_listen="${LISTEN_PORT_ARRAY[0]}"
+        local last_listen="${LISTEN_PORT_ARRAY[-1]}"
+        local first_remote="${REMOTE_PORT_ARRAY[0]}"
+        local last_remote="${REMOTE_PORT_ARRAY[-1]}"
+        local remote_display
+        if [ "$remote_count" -eq 1 ]; then
+            remote_display="$REMOTE_IP:$first_remote"
+        else
+            remote_display="$REMOTE_IP:$first_remote-$last_remote"
+        fi
+        echo -e "${GREEN}✓ 共创建 $listen_count 个中转规则  端口: $first_listen-$last_listen -> $remote_display${NC}"
     fi
 }
 
@@ -47,6 +59,8 @@ create_exit_rules_for_ports() {
 
     local listen_count=${#LISTEN_PORT_ARRAY[@]}
     local forward_count=${#FORWARD_PORT_ARRAY[@]}
+    local is_batch=false
+    [ "$listen_count" -gt 1 ] && is_batch=true
 
     for i in "${!LISTEN_PORT_ARRAY[@]}"; do
         local listen_port="${LISTEN_PORT_ARRAY[$i]}"
@@ -62,17 +76,28 @@ create_exit_rules_for_ports() {
             fi
         fi
 
-        create_single_exit_rule "$listen_port" "$forward_port"
+        create_single_exit_rule "$listen_port" "$forward_port" "$is_batch"
     done
 
-    if [ ${#LISTEN_PORT_ARRAY[@]} -gt 1 ]; then
-        echo -e "${BLUE}多端口配置完成，共创建 ${#LISTEN_PORT_ARRAY[@]} 个服务端规则${NC}"
+    if [ "$is_batch" = true ]; then
+        local first_listen="${LISTEN_PORT_ARRAY[0]}"
+        local last_listen="${LISTEN_PORT_ARRAY[-1]}"
+        local first_fwd="${FORWARD_PORT_ARRAY[0]}"
+        local last_fwd="${FORWARD_PORT_ARRAY[-1]}"
+        local fwd_display
+        if [ "$forward_count" -eq 1 ]; then
+            fwd_display="$FORWARD_TARGET:$first_fwd"
+        else
+            fwd_display="$FORWARD_TARGET:$first_fwd-$last_fwd"
+        fi
+        echo -e "${GREEN}✓ 共创建 $listen_count 个服务端规则  端口: $first_listen-$last_listen -> $fwd_display${NC}"
     fi
 }
 
 create_single_nat_rule() {
     local listen_port="$1"
     local remote_port="$2"
+    local silent="${3:-false}"
 
     local rule_id=$(generate_rule_id)
     local rule_file="${RULES_DIR}/rule-${rule_id}.conf"
@@ -111,12 +136,13 @@ MPTCP_MODE="off"
 PROXY_MODE="off"
 EOF
 
-    echo -e "${GREEN}✓ 中转配置已创建 (ID: $rule_id) 端口: $listen_port->$REMOTE_IP:$remote_port${NC}"
+    [ "$silent" != "true" ] && echo -e "${GREEN}✓ 中转配置已创建 (ID: $rule_id) 端口: $listen_port->$REMOTE_IP:$remote_port${NC}"
 }
 
 create_single_exit_rule() {
     local listen_port="$1"
     local forward_port="$2"
+    local silent="${3:-false}"
 
     local rule_id=$(generate_rule_id)
     local rule_file="${RULES_DIR}/rule-${rule_id}.conf"
@@ -153,7 +179,7 @@ MPTCP_MODE="off"
 PROXY_MODE="off"
 EOF
 
-    echo -e "${GREEN}✓ 服务端配置已创建 (ID: $rule_id) 端口: $listen_port->$forward_target${NC}"
+    [ "$silent" != "true" ] && echo -e "${GREEN}✓ 服务端配置已创建 (ID: $rule_id) 端口: $listen_port->$forward_target${NC}"
 }
 
 # 内核版本检查，确保MPTCP功能可用性
