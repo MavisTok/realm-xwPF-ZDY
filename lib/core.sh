@@ -289,10 +289,36 @@ validate_ports() {
     local input="${1// /}"
     [ -z "$input" ] && return 1
 
-    IFS=',' read -ra ports <<< "$input"
-    for p in "${ports[@]}"; do
-        validate_port "$p" || return 1
+    IFS=',' read -ra parts <<< "$input"
+    for p in "${parts[@]}"; do
+        if [[ "$p" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            local start="${BASH_REMATCH[1]}"
+            local end="${BASH_REMATCH[2]}"
+            validate_port "$start" && validate_port "$end" && [ "$start" -le "$end" ] || return 1
+        else
+            validate_port "$p" || return 1
+        fi
     done
+}
+
+# 展开端口段和逗号列表为逗号分隔的单端口列表
+# 例如: "8080-8082,9000" -> "8080,8081,8082,9000"
+expand_ports() {
+    local input="${1// /}"
+    local result=""
+    IFS=',' read -ra parts <<< "$input"
+    for p in "${parts[@]}"; do
+        if [[ "$p" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            local start="${BASH_REMATCH[1]}"
+            local end="${BASH_REMATCH[2]}"
+            for ((port=start; port<=end; port++)); do
+                result="${result:+$result,}$port"
+            done
+        else
+            result="${result:+$result,}$p"
+        fi
+    done
+    echo "$result"
 }
 
 validate_ip() {

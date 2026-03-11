@@ -4,8 +4,8 @@ create_nat_rules_for_ports() {
     local listen_ports="$1"
     local remote_ports="$2"
 
-    listen_ports=$(echo "$listen_ports" | tr -d ' ')
-    remote_ports=$(echo "$remote_ports" | tr -d ' ')
+    listen_ports=$(expand_ports "$(echo "$listen_ports" | tr -d ' ')")
+    remote_ports=$(expand_ports "$(echo "$remote_ports" | tr -d ' ')")
 
     IFS=',' read -ra LISTEN_PORT_ARRAY <<< "$listen_ports"
     IFS=',' read -ra REMOTE_PORT_ARRAY <<< "$remote_ports"
@@ -39,8 +39,8 @@ create_exit_rules_for_ports() {
     local listen_ports="$1"
     local forward_ports="$2"
 
-    listen_ports=$(echo "$listen_ports" | tr -d ' ')
-    forward_ports=$(echo "$forward_ports" | tr -d ' ')
+    listen_ports=$(expand_ports "$(echo "$listen_ports" | tr -d ' ')")
+    forward_ports=$(expand_ports "$(echo "$forward_ports" | tr -d ' ')")
 
     IFS=',' read -ra LISTEN_PORT_ARRAY <<< "$listen_ports"
     IFS=',' read -ra FORWARD_PORT_ARRAY <<< "$forward_ports"
@@ -1130,7 +1130,7 @@ configure_nat_server() {
     echo -e "${YELLOW}=== 中转服务器配置(不了解入口出口一般回车默认即可) ===${NC}"
     echo ""
 
-echo -e "${BLUE}多端口使用,逗号分隔(回车随机端口)${NC}"
+echo -e "${BLUE}支持单端口(8080)、逗号多端口(8080,8081)、端口段(8080-8090)(回车随机端口)${NC}"
 while true; do
     read -p "请输入本地监听端口 (客户端连接的端口，nat机需使用分配的端口): " NAT_LISTEN_PORT
 
@@ -1146,13 +1146,13 @@ while true; do
     fi
 done
 
-    # 检查是否为多端口
+    # 检查是否为多端口或端口段
     local is_multi_port=false
     local port_status=0
 
-    if [[ "$NAT_LISTEN_PORT" == *","* ]]; then
+    if [[ "$NAT_LISTEN_PORT" == *","* ]] || [[ "$NAT_LISTEN_PORT" == *"-"* ]]; then
         is_multi_port=true
-        echo -e "${BLUE}检测到多端口配置，跳过端口占用检测${NC}"
+        echo -e "${BLUE}检测到多端口/端口段配置，跳过端口占用检测${NC}"
         port_status=0  # 多端口不检测占用
     else
         # 单端口检测
@@ -1263,20 +1263,20 @@ done
     done
 
     while true; do
-        read -p "出口服务器的监听端口(多端口使用,逗号分隔): " REMOTE_PORT
+        read -p "出口服务器的监听端口(单端口/逗号多端口/端口段,如 8080 或 8080,8081 或 8080-8090): " REMOTE_PORT
         if validate_ports "$REMOTE_PORT"; then
             break
         else
-            echo -e "${RED}无效端口号，请输入 1-65535 之间的数字，多端口用逗号分隔${NC}"
+            echo -e "${RED}无效端口号，请输入 1-65535 之间的数字，支持逗号分隔或端口段(如 8080-8090)${NC}"
         fi
     done
 
     # 测试连通性
     local connectivity_ok=true
 
-    # 检查是否为多端口
-    if [[ "$REMOTE_PORT" == *","* ]]; then
-        echo -e "${BLUE}多端口配置，跳过连通性测试${NC}"
+    # 检查是否为多端口或端口段
+    if [[ "$REMOTE_PORT" == *","* ]] || [[ "$REMOTE_PORT" == *"-"* ]]; then
+        echo -e "${BLUE}多端口/端口段配置，跳过连通性测试${NC}"
     else
         echo -e "${YELLOW}正在测试与出口服务器的连通性...${NC}"
         if check_connectivity "$REMOTE_IP" "$REMOTE_PORT"; then
@@ -1508,22 +1508,22 @@ configure_exit_server() {
     fi
     echo ""
 
-    echo -e "${BLUE}多端口使用,逗号分隔${NC}"
+    echo -e "${BLUE}支持单端口(8080)、逗号多端口(8080,8081)、端口段(8080-8090)${NC}"
     while true; do
         read -p "请输入监听端口 (等待中转服务器连接的端口，NAT VPS需使用商家分配的端口): " EXIT_LISTEN_PORT
         if validate_ports "$EXIT_LISTEN_PORT"; then
             echo -e "${GREEN}监听端口设置为: $EXIT_LISTEN_PORT${NC}"
             break
         else
-            echo -e "${RED}无效端口号，请输入 1-65535 之间的数字，多端口用逗号分隔${NC}"
+            echo -e "${RED}无效端口号，请输入 1-65535 之间的数字，支持逗号分隔或端口段(如 8080-8090)${NC}"
         fi
     done
 
     local is_multi_port=false
 
-    if [[ "$EXIT_LISTEN_PORT" == *","* ]]; then
+    if [[ "$EXIT_LISTEN_PORT" == *","* ]] || [[ "$EXIT_LISTEN_PORT" == *"-"* ]]; then
         is_multi_port=true
-        echo -e "${BLUE}检测到多端口配置，跳过端口占用检测${NC}"
+        echo -e "${BLUE}检测到多端口/端口段配置，跳过端口占用检测${NC}"
     else
 
         check_port_usage "$EXIT_LISTEN_PORT" "出口服务器监听"
@@ -1559,12 +1559,12 @@ configure_exit_server() {
     # 转发目标端口配置
     local forward_port
     while true; do
-        read -p "转发目标业务端口(多端口使用,逗号分隔): " forward_port
+        read -p "转发目标业务端口(单端口/逗号多端口/端口段,如 8080 或 8080,8081 或 8080-8090): " forward_port
         if validate_ports "$forward_port"; then
             echo -e "${GREEN}转发端口设置为: $forward_port${NC}"
             break
         else
-            echo -e "${RED}无效端口号，请输入 1-65535 之间的数字，多端口用逗号分隔${NC}"
+            echo -e "${RED}无效端口号，请输入 1-65535 之间的数字，支持逗号分隔或端口段(如 8080-8090)${NC}"
         fi
     done
 
@@ -1574,9 +1574,9 @@ configure_exit_server() {
     # 测试转发目标连通性
     local connectivity_ok=true
 
-    # 检查是否为多端口，多端口跳过连通性测试
-    if [[ "$forward_port" == *","* ]]; then
-        echo -e "${BLUE}多端口配置，跳过转发目标连通性测试${NC}"
+    # 检查是否为多端口/端口段，跳过连通性测试
+    if [[ "$forward_port" == *","* ]] || [[ "$forward_port" == *"-"* ]]; then
+        echo -e "${BLUE}多端口/端口段配置，跳过转发目标连通性测试${NC}"
     else
         echo -e "${YELLOW}正在测试转发目标连通性...${NC}"
 
