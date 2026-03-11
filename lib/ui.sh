@@ -32,6 +32,101 @@ import_realm_config() {
     read -p "按回车键返回..."
 }
 
+# 将连续端口规则合并为端口段显示
+# 用法: _display_rules_grouped <role> <enabled>
+# role: 1=中转, 2=服务端; enabled: true/false
+_display_rules_grouped() {
+    local role="$1"
+    local enabled="$2"
+    local default_ip="${NAT_LISTEN_IP:-::}"
+
+    # 收集规则数据
+    local -a entries=()
+    for rule_file in "${RULES_DIR}"/rule-*.conf; do
+        [ -f "$rule_file" ] || continue
+        read_rule_file "$rule_file" || continue
+        [ "$ENABLED" = "$enabled" ] || continue
+        [ "$RULE_ROLE" = "$role" ] || continue
+
+        if [ "$role" = "1" ]; then
+            # 中转: listen_port|remote_port|remote_host|through_ip|security|listen_ip|note|ws_path|ws_host|rule_name
+            entries+=("${LISTEN_PORT}|${REMOTE_PORT}|${REMOTE_HOST}|${THROUGH_IP:-::}|${SECURITY_LEVEL}|${LISTEN_IP:-$default_ip}|${RULE_NOTE}|${WS_PATH}|${WS_HOST}|${RULE_NAME}")
+        else
+            # 服务端: listen_port|fwd_port|fwd_host|.|security|listen_ip|note|ws_path|ws_host|rule_name
+            local _fwd_host="${FORWARD_TARGET%:*}"
+            local _fwd_port="${FORWARD_TARGET##*:}"
+            entries+=("${LISTEN_PORT}|${_fwd_port}|${_fwd_host}||${SECURITY_LEVEL}|${LISTEN_IP:-::}|${RULE_NOTE}|${WS_PATH}|${WS_HOST}|${RULE_NAME}")
+        fi
+    done
+
+    [ ${#entries[@]} -eq 0 ] && return 1
+
+    # 按监听端口排序
+    IFS=$'\n' local -a sorted=($(printf '%s\n' "${entries[@]}" | sort -t'|' -k1,1n))
+    unset IFS
+
+    local n=${#sorted[@]}
+    local i=0
+    while [ $i -lt $n ]; do
+        IFS='|' read -r lp rp rh tip sl lip rn wsp wsh rname <<< "${sorted[$i]}"
+
+        local g_lp_s=$lp g_lp_e=$lp
+        local g_rp_s=$rp g_rp_e=$rp
+        local g_count=1
+        local j=$((i + 1))
+
+        # 尝试向后合并连续规则
+        while [ $j -lt $n ]; do
+            IFS='|' read -r nlp nrp nrh ntip nsl nlip nrn nwsp nwsh nrname <<< "${sorted[$j]}"
+            # 属性相同 + 监听端口连续 + 远端端口连续（或同一端口）
+            local same_attrs=false
+            [ "$nrh" = "$rh" ] && [ "$ntip" = "$tip" ] && [ "$nsl" = "$sl" ] && [ "$nlip" = "$lip" ] && same_attrs=true
+
+            local clp=false; [ "$nlp" -eq "$((g_lp_e + 1))" ] && clp=true
+            local crp=false
+            if [ "$nrp" -eq "$((g_rp_e + 1))" ] 2>/dev/null; then
+                crp=true
+            elif [ "$nrp" = "$g_rp_s" ] && [ "$g_rp_s" = "$g_rp_e" ]; then
+                crp=true
+            fi
+
+            if [ "$same_attrs" = true ] && [ "$clp" = true ] && [ "$crp" = true ]; then
+                g_lp_e=$nlp; g_rp_e=$nrp; g_count=$((g_count + 1)); j=$((j + 1))
+            else
+                break
+            fi
+        done
+
+        # 构建显示字符串
+        local lp_disp rp_disp
+        [ "$g_count" -gt 1 ] && lp_disp="$g_lp_s-$g_lp_e" || lp_disp="$g_lp_s"
+        [ "$g_rp_s" = "$g_rp_e" ] && rp_disp="$g_rp_s" || rp_disp="$g_rp_s-$g_rp_e"
+
+        local display_target=$(smart_display_target "$rh")
+        local note_display=""
+        [ -n "$rn" ] && note_display=" | 备注: ${GREEN}$rn${NC}"
+
+        if [ "$enabled" = "true" ]; then
+            local security_display=$(get_security_display "$sl" "$wsp" "$wsh")
+            if [ "$role" = "1" ]; then
+                echo -e "  • ${GREEN}$rname${NC}: ${lip}:$lp_disp → $tip → $display_target:$rp_disp"
+            else
+                echo -e "  • ${GREEN}$rname${NC}: ${lip}:$lp_disp → $display_target:$rp_disp"
+            fi
+            get_rule_status_display "$security_display" "$note_display"
+        else
+            if [ "$role" = "1" ]; then
+                echo -e "  • ${GRAY}$rname${NC}: $lp_disp → $tip → $display_target:$rp_disp (已禁用)"
+            else
+                echo -e "  • ${GRAY}$rname${NC}: $lp_disp → $display_target:$rp_disp (已禁用)"
+            fi
+        fi
+
+        i=$j
+    done
+    return 0
+}
+
 rules_management_menu() {
     while true; do
         clear
@@ -66,82 +161,31 @@ rules_management_menu() {
             echo -e "配置模式: ${GREEN}多规则模式${NC} (${GREEN}$enabled_count${NC} 启用 / ${YELLOW}$disabled_count${NC} 禁用 / 共 $total_count 个)"
 
             if [ "$enabled_count" -gt 0 ]; then
-                local has_relay_rules=false
-                local relay_count=0
+                local _has_relay=false _has_exit=false
                 for rule_file in "${RULES_DIR}"/rule-*.conf; do
-                    if [ -f "$rule_file" ]; then
-                        if read_rule_file "$rule_file" && [ "$ENABLED" = "true" ] && [ "$RULE_ROLE" = "1" ]; then
-                            if [ "$has_relay_rules" = false ]; then
-                                echo -e "${GREEN}中转服务器:${NC}"
-                                has_relay_rules=true
-                            fi
-                            relay_count=$((relay_count + 1))
-                            local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH" "$WS_HOST")
-                            local display_target=$(smart_display_target "$REMOTE_HOST")
-                            local rule_display_name="$RULE_NAME"
-                            local display_ip="${NAT_LISTEN_IP:-::}"
-                            local through_display="${THROUGH_IP:-::}"
-                            echo -e "  • ${GREEN}$rule_display_name${NC}: ${LISTEN_IP:-$display_ip}:$LISTEN_PORT → $through_display → $display_target:$REMOTE_PORT"
-                            local note_display=""
-                            if [ -n "$RULE_NOTE" ]; then
-                                note_display=" | 备注: ${GREEN}$RULE_NOTE${NC}"
-                            fi
-                            get_rule_status_display "$security_display" "$note_display"
-
-                        fi
-                    fi
+                    [ -f "$rule_file" ] || continue
+                    read_rule_file "$rule_file" || continue
+                    [ "$ENABLED" = "true" ] || continue
+                    [ "$RULE_ROLE" = "1" ] && _has_relay=true
+                    [ "$RULE_ROLE" = "2" ] && _has_exit=true
                 done
 
-                local has_exit_rules=false
-                local exit_count=0
-                for rule_file in "${RULES_DIR}"/rule-*.conf; do
-                    if [ -f "$rule_file" ]; then
-                        if read_rule_file "$rule_file" && [ "$ENABLED" = "true" ] && [ "$RULE_ROLE" = "2" ]; then
-                            if [ "$has_exit_rules" = false ]; then
-                                if [ "$has_relay_rules" = true ]; then
-                                    echo ""
-                                fi
-                                echo -e "${GREEN}服务端服务器 (双端Realm架构):${NC}"
-                                has_exit_rules=true
-                            fi
-                            exit_count=$((exit_count + 1))
-                            local security_display=$(get_security_display "$SECURITY_LEVEL" "$WS_PATH" "$WS_HOST")
-                            # 服务端服务器使用FORWARD_TARGET而不是REMOTE_HOST
-                            local target_host="${FORWARD_TARGET%:*}"
-                            local target_port="${FORWARD_TARGET##*:}"
-                            local display_target=$(smart_display_target "$target_host")
-                            local rule_display_name="$RULE_NAME"
-                            local display_ip="::"
-                            echo -e "  • ${GREEN}$rule_display_name${NC}: ${LISTEN_IP:-$display_ip}:$LISTEN_PORT → $display_target:$target_port"
-                            local note_display=""
-                            if [ -n "$RULE_NOTE" ]; then
-                                note_display=" | 备注: ${GREEN}$RULE_NOTE${NC}"
-                            fi
-                            get_rule_status_display "$security_display" "$note_display"
+                if [ "$_has_relay" = true ]; then
+                    echo -e "${GREEN}中转服务器:${NC}"
+                    _display_rules_grouped "1" "true"
+                fi
 
-                        fi
-                    fi
-                done
+                if [ "$_has_exit" = true ]; then
+                    [ "$_has_relay" = true ] && echo ""
+                    echo -e "${GREEN}服务端服务器 (双端Realm架构):${NC}"
+                    _display_rules_grouped "2" "true"
+                fi
             fi
 
             if [ "$disabled_count" -gt 0 ]; then
                 echo -e "${YELLOW}禁用的规则:${NC}"
-                for rule_file in "${RULES_DIR}"/rule-*.conf; do
-                    if [ -f "$rule_file" ]; then
-                        if read_rule_file "$rule_file" && [ "$ENABLED" = "false" ]; then
-                            if [ "$RULE_ROLE" = "2" ]; then
-                                local target_host="${FORWARD_TARGET%:*}"
-                                local target_port="${FORWARD_TARGET##*:}"
-                                local display_target=$(smart_display_target "$target_host")
-                                echo -e "  • ${GRAY}$RULE_NAME${NC}: $LISTEN_PORT → $display_target:$target_port (已禁用)"
-                            else
-                                local display_target=$(smart_display_target "$REMOTE_HOST")
-                                local through_display="${THROUGH_IP:-::}"
-                                echo -e "  • ${GRAY}$RULE_NAME${NC}: $LISTEN_PORT → $through_display → $display_target:$REMOTE_PORT (已禁用)"
-                            fi
-                        fi
-                    fi
-                done
+                _display_rules_grouped "1" "false"
+                _display_rules_grouped "2" "false"
             fi
         else
             echo -e "配置模式: ${BLUE}暂无配置${NC}"
