@@ -1289,8 +1289,12 @@ done
     done
 
     while true; do
-        read -p "出口服务器的监听端口(单端口/逗号多端口/端口段,如 8080 或 8080,8081 或 8080-8090): " REMOTE_PORT
+        read -p "出口服务器的监听端口(单端口/逗号多端口/端口段,如 8080 或 8080,8081 或 8080-8090) [默认: $NAT_LISTEN_PORT]: " REMOTE_PORT
+        if [ -z "$REMOTE_PORT" ]; then
+            REMOTE_PORT="$NAT_LISTEN_PORT"
+        fi
         if validate_ports "$REMOTE_PORT"; then
+            echo -e "${GREEN}出口端口设置为: $REMOTE_PORT${NC}"
             break
         else
             echo -e "${RED}无效端口号，请输入 1-65535 之间的数字，支持逗号分隔或端口段(如 8080-8090)${NC}"
