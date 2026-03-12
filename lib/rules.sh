@@ -233,6 +233,84 @@ read_and_check_relay_rule() {
     fi
 }
 
+# 辅助: 对已排序的 entries 数组按端口段分组输出（管理/删除视图）
+# 格式: "listen_port|remote_port|remote_host|through_ip|rule_id|status_text|status_color|rule_name"
+_print_grouped_mgmt_entries() {
+    local role="$1"; shift
+    local entries=("$@")
+    [ ${#entries[@]} -eq 0 ] && return
+
+    IFS=$'\n' local -a sorted=($(printf '%s\n' "${entries[@]}" | sort -t'|' -k1,1n))
+    unset IFS
+
+    local n=${#sorted[@]} i=0
+    while [ $i -lt $n ]; do
+        IFS='|' read -r lp rp rh tip rid st sc rname <<< "${sorted[$i]}"
+        local gs_lp=$lp ge_lp=$lp gs_rp=$rp ge_rp=$rp gs_id=$rid ge_id=$rid gc=1
+        local j=$((i+1))
+
+        while [ $j -lt $n ]; do
+            IFS='|' read -r nlp nrp nrh ntip nrid nst nsc nrname <<< "${sorted[$j]}"
+            local same=false clp=false crp=false
+            [ "$nrh" = "$rh" ] && [ "$ntip" = "$tip" ] && [ "$nst" = "$st" ] && same=true
+            [ "$nlp" -eq "$((ge_lp+1))" ] && clp=true
+            { [ "$nrp" -eq "$((ge_rp+1))" ] 2>/dev/null || { [ "$nrp" = "$gs_rp" ] && [ "$gs_rp" = "$ge_rp" ]; }; } && crp=true
+            [ "$same" = true ] && [ "$clp" = true ] && [ "$crp" = true ] || break
+            ge_lp=$nlp; ge_rp=$nrp; ge_id=$nrid; gc=$((gc+1)); j=$((j+1))
+        done
+
+        local lp_d rp_d id_d
+        [ $gc -gt 1 ] && lp_d="$gs_lp-$ge_lp" || lp_d="$gs_lp"
+        [ "$gs_rp" = "$ge_rp" ] && rp_d="$gs_rp" || rp_d="$gs_rp-$ge_rp"
+        [ $gc -gt 1 ] && id_d="$gs_id-$ge_id" || id_d="$gs_id"
+
+        local dt=$(smart_display_target "$rh")
+        if [ "$role" = "1" ]; then
+            echo -e "  ID ${BLUE}$id_d${NC}: ${GREEN}$rname${NC} ($lp_d → $tip → $dt:$rp_d) [${sc}$st${NC}]"
+        else
+            echo -e "  ID ${BLUE}$id_d${NC}: ${GREEN}$rname${NC} ($lp_d → $dt:$rp_d) [${sc}$st${NC}]"
+        fi
+        i=$j
+    done
+}
+
+# 管理/删除视图：按端口段分组显示规则，ID连续的合并为范围（如 ID 1-105）
+list_rules_grouped_management() {
+    if [ ! -d "$RULES_DIR" ] || [ -z "$(ls -A "$RULES_DIR"/*.conf 2>/dev/null)" ]; then
+        echo -e "${BLUE}暂无转发规则${NC}"
+        return 1
+    fi
+
+    local -a relay_entries=() exit_entries=()
+    for rule_file in "${RULES_DIR}"/rule-*.conf; do
+        [ -f "$rule_file" ] || continue
+        read_rule_file "$rule_file" || continue
+        local _sc="$GREEN" _st="启用"
+        [ "$ENABLED" != "true" ] && _sc="$RED" && _st="禁用"
+        if [ "$RULE_ROLE" = "1" ]; then
+            relay_entries+=("${LISTEN_PORT}|${REMOTE_PORT}|${REMOTE_HOST}|${THROUGH_IP:-::}|${RULE_ID}|${_st}|${_sc}|${RULE_NAME}")
+        else
+            local _fh="${FORWARD_TARGET%:*}" _fp="${FORWARD_TARGET##*:}"
+            exit_entries+=("${LISTEN_PORT}|${_fp}|${_fh}||${RULE_ID}|${_st}|${_sc}|${RULE_NAME}")
+        fi
+    done
+
+    local found=false
+    if [ ${#relay_entries[@]} -gt 0 ]; then
+        found=true
+        echo -e "${GREEN}中转服务器:${NC}"
+        _print_grouped_mgmt_entries "1" "${relay_entries[@]}"
+    fi
+    if [ ${#exit_entries[@]} -gt 0 ]; then
+        [ "$found" = true ] && echo ""
+        found=true
+        echo -e "${GREEN}服务端服务器 (双端Realm架构):${NC}"
+        _print_grouped_mgmt_entries "2" "${exit_entries[@]}"
+    fi
+    [ "$found" = false ] && echo -e "${BLUE}暂无转发规则${NC}" && return 1
+    return 0
+}
+
 # 根据显示模式调整规则列表格式，支持管理、MPTCP、Proxy三种视图
 list_rules_with_info() {
     local display_mode="${1:-management}"

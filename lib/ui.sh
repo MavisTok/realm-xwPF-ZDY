@@ -256,18 +256,20 @@ rules_management_menu() {
             4)
                 echo -e "${YELLOW}=== 删除配置 ===${NC}"
                 echo ""
-                if list_rules_with_info "management"; then
+                if list_rules_grouped_management; then
                     echo ""
-                    read -p "请输入要删除的规则ID(多ID使用逗号,分隔): " rule_input
+                    read -p "请输入要删除的规则ID (单个:5  范围:1-10  多个:1,2,3): " rule_input
 
                     if [ -z "$rule_input" ]; then
                         echo -e "${RED}错误: 请输入规则ID${NC}"
                     else
-                        if [[ "$rule_input" == *","* ]]; then
-                            batch_delete_rules "$rule_input"
+                        # 展开 ID 范围（如 1-10 → 1,2,3,...,10）
+                        local expanded_input=$(expand_ports "$rule_input")
+                        if [[ "$expanded_input" == *","* ]]; then
+                            batch_delete_rules "$expanded_input"
                         else
-                            if [[ "$rule_input" =~ ^[0-9]+$ ]]; then
-                                delete_rule "$rule_input"
+                            if [[ "$expanded_input" =~ ^[0-9]+$ ]]; then
+                                delete_rule "$expanded_input"
                             else
                                 echo -e "${RED}无效的规则ID${NC}"
                             fi
